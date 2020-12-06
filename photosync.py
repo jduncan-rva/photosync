@@ -27,10 +27,16 @@ class photoSync:
             self.log.info("Loading Config File - %s", configfile)
             self.config.read(configfile)
 
+            if 'general' in self.config.sections():
+                self.artist = self.config['general']['artist']
+                self.source = self.config['general']['source']
+
             if 'plex' in self.config.sections():
                 self.log.info("Loading Plex Configs")
-                self.plexUrl = self.config['plex']['url']
-                self.plexToken = self.config['plex']['token']
+                plexUrl = self.config['plex']['url']
+                plexToken = self.config['plex']['token']
+
+                self.plex = self.connectToPlex(url=plexUrl, token=plexToken)
 
             if 'filesystem' in self.config.sections():
                 self.log.info("Loading Filesystem Configs")
@@ -54,6 +60,32 @@ class photoSync:
             self.log.error(e)
             raise e
 
+    def _processPhoto(self, filename, caption, taken_at):   
+        """This function does the heavy lifting of actually editing the metadata tag for a jpg image"""
+
+        try:
+            self.log.info("Processing photo - %s", filename)
+
+            # This adds the date and caption info to the image 
+            # file in the proper locations 
+            cmd = [
+                'exiftool',
+                '-overwrite_original',
+                '-iptc:Caption-Abstract=%s' % caption,
+                '-iptc:Headline=%s' % caption,
+                '-exif:imagedescription=%s' % caption,
+                '-AllDates=%s'% taken_at,
+                '-make=%s' % self.source,
+                '-artist=%s' % self.artist,
+                filename
+            ]
+            subprocess.run(cmd)
+
+        except Exception as e:
+            self.log.error(e)
+            raise e
+
+
     def processScannedPhotos(self, data):
         """ When creating a JSON file for scanned photos, there are some small differences, primarily around the date. We'll handle those here."""
 
@@ -64,17 +96,9 @@ class photoSync:
                 filename = pic['path']
 
                 if os.path.exists(filename):
-                    self.log.info("Processing photo - %s", filename)
-
-                    # This adds the date and caption info to the image file
-                    exif_dict = piexif.load(filename)
-                    exif_dict['0th'][piexif.ImageIFD.DateTime] = taken_at
-                    exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = taken_at
-                    exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = taken_at
-                    exif_dict['0th'][piexif.ImageIFD.ImageDescription] = caption
-                    exif_dict['0th'][piexif.ImageIFD.Make] = 'Scanned Photo'    
-                    exif_bytes = piexif.dump(exif_dict)
-                    piexif.insert(exif_bytes, filename)    
+                    self._processPhoto(filename=filename, 
+                                        taken_at=taken_at, 
+                                        caption=caption)
 
         except Exception as e:
             self.log.error(e)
@@ -100,18 +124,11 @@ class photoSync:
             else:
                 caption = str(pic['caption'])
 
-            filename = pic['path']
+            filename = os.path.join(self.dataVolume, pic['path'])
             if os.path.exists(filename):
-                self.log.info("Processing %s" % filename)
-
-                exif_dict = piexif.load(filename)
-                exif_dict['0th'][piexif.ImageIFD.DateTime] = taken_at
-                exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = taken_at
-                exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = taken_at
-                exif_dict['0th'][piexif.ImageIFD.ImageDescription] = caption
-                exif_dict['0th'][piexif.ImageIFD.Make] = 'Instagram'    
-                exif_bytes = piexif.dump(exif_dict)
-                piexif.insert(exif_bytes, filename)
+                self._processPhoto(filename=filename, 
+                                    taken_at=taken_at, 
+                                    caption=caption)
 
     def processIGVideos(self, data):
         """ Processes video information (date only) for IG-style data file. It has a dependency on exiftool (https://exiftool.org/) to edit the creation date in a video file. exiftool understands how to manipulate this for most formats, but I've only tested it on mp4's from an IG export."""
@@ -144,7 +161,7 @@ class photoSync:
 
 
         for pic in data['photos']:
-            filename = pic['path']
+            filename = os.path.join(self.dataVolume, pic['path'])
             if os.path.exists(filename):
                 f = os.path.basename(filename)
                 dst = os.path.join(self.copyVolume, f)
@@ -155,10 +172,10 @@ class photoSync:
         if 'videos' in data.keys():
             for video in data['videos']:
                 path = re.sub('videos','photos',video['path'])
-                path = os.path.join('/Volumes', path)
+                path = os.path.join(self.dataVolume, path)
                 if os.path.exists(path):
                     f = os.path.basename(path)
-                    dst = os.path.join(dest_dir, f)
+                    dst = os.path.join(self.copyVolume, f)
 
                     print("copying ", path)
                     copyfile(path, dst)
@@ -169,6 +186,7 @@ class photoSync:
         data = dict()
         data['photos'] = list()
 
+        self.log.info("Processing CSV File - %s", filename)
         fh = open(filename,'r', encoding='utf-8') 
         csv_data = csv.DictReader(fh)
         for row in csv_data:
@@ -185,15 +203,19 @@ class photoSync:
             x['taken_at'] = date_final
             x['path'] = file_string
 
+            self.log.debug("Adding Path - %s", x['path'])
             data['photos'].append(x)
 
         fh.close()
 
         json_filename = re.sub('.csv','.json',filename)
+        self.log.info("Creating JSON File - %s", json_filename)
         json_file = open(json_filename,'w+',encoding='utf-8')
         json_file.write(json.dumps(data, indent=4))
 
         json_file.close()
+
+        return json_filename
 
 
 
