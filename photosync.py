@@ -15,26 +15,29 @@ class photoSync:
 
     def __init__(self):
         logfile = 'photosync.log'
-        logging.basicConfig(filename=logfile, 
-                level=logging.DEBUG)
+        logging.basicConfig(filename=logfile, level=logging.DEBUG)
         self.log = logging.getLogger(__name__)
         self._loadConfig()
 
     def _loadConfig(self, configfile='.config'):
         """Loads a config file"""
 
-        self.config = configparser.ConfigParser()
-        self.log.info("Loading Config File - %s", configfile)
-        self.config.read(configfile)
+        if os.path.exists(configfile):
+            self.config = configparser.ConfigParser()
+            self.log.info("Loading Config File - %s", configfile)
+            self.config.read(configfile)
 
-        if 'plex' in self.config.sections():
-            self.log.info("Loading Plex Configs")
-            self.plexUrl = self.config['plex']['url']
-            self.plexToken = self.config['plex']['token']
+            if 'plex' in self.config.sections():
+                self.log.info("Loading Plex Configs")
+                self.plexUrl = self.config['plex']['url']
+                self.plexToken = self.config['plex']['token']
 
-        if 'filesystem' in self.config.sections():
-            self.log.info("Loading Filesystem Configs")
-            self.dataVolume = self.config['filesystem']['data_volume']
+            if 'filesystem' in self.config.sections():
+                self.log.info("Loading Filesystem Configs")
+                self.dataVolume = self.config['filesystem']['data_volume']
+                self.copyVolume = self.config['filesystem']['copy_volume']
+        else:
+            self.log.info("Config File Not Found - %s", configfile)
 
     def loadJSON(self, filename):
         """ Returns the json data from an Instagram-style data file """
@@ -136,19 +139,17 @@ class photoSync:
 
         return plex
 
-    def copyFilesFromJSON(self, data, dest_dir):
+    def copyFilesFromJSON(self, data):
         """Returns a list of all files we've got in their mounted form data is the full dataset from a JSON file. The files are copied to a temporary directory to make them easier to copy to Google Photos or other sources. This is useful when you've already added files to a library and are backfilling information"""
 
 
         for pic in data['photos']:
-            #TODO make the data path a variable
-            filename = os.path.join('/Volumes', pic['path'])
             filename = pic['path']
             if os.path.exists(filename):
                 f = os.path.basename(filename)
-                dst = os.path.join(dest_dir, f)
+                dst = os.path.join(self.copyVolume, f)
 
-                print("copying ", filename)
+                self.log.info("Copying File - %s", filename)
                 copyfile(filename, dst)
 
         if 'videos' in data.keys():
@@ -172,7 +173,7 @@ class photoSync:
         csv_data = csv.DictReader(fh)
         for row in csv_data:
             x = dict()
-            file_string = "/Volumes/photos/%s.jpg" % row['name']
+            file_string = "%s/%s.jpg" % (self.dataVolume, row['name'])
 
             date_string = "%s 12:00:00" % row['taken_at']
             date_raw = datetime.strptime(date_string, '%m/%d/%Y %H:%M:%S')
@@ -188,7 +189,8 @@ class photoSync:
 
         fh.close()
 
-        json_file = open('photo-data.json','w+',encoding='utf-8')
+        json_filename = re.sub('.csv','.json',filename)
+        json_file = open(json_filename,'w+',encoding='utf-8')
         json_file.write(json.dumps(data, indent=4))
 
         json_file.close()
