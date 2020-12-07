@@ -20,7 +20,6 @@ import csv
 import subprocess
 import logging
 import configparser
-import piexif
 from shutil import copyfile
 from plexapi.server import PlexServer
 
